@@ -1,28 +1,38 @@
-from fastapi import APIRouter, HTTPException
-from .auth_bcrypt import verify_password, get_password_hash
-from .auth_handler import sign_jwt
+from fastapi import APIRouter, HTTPException, Depends
+from app.auth.auth_bcrypt import verify_password, get_password_hash
+from app.auth.auth_handler import sign_jwt
 from pydantic import BaseModel
 
+from app.db.database import get_db
+from app.models.user import User
+from sqlalchemy.orm import Session
+from app.schemas.user import UserCreate, UserLogin, UserOut
+
+from app.utils.hash import hash_password
 
 router = APIRouter()
 
-fake_users_db = {}
+@router.post("/auth/register", response_model=UserOut)
+def register(user: UserCreate, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.email == user.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="User already exists")
 
-class User(BaseModel):
-    username: str
-    password: str
+    hashed_pw = hash_password(user.password)
+    new_user = User(email=user.email, password=hashed_pw)
 
-@router.post("/auth/register")
-def register(user: User):
-    if user.username in fake_users_db:
-        raise HTTPException(status_code=400, detail="User already registered")
-    fake_users_db[user.username] = get_password_hash(user.password)
-    return {"message": "User registered successfully"}
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return new_user  # auto-converted to UserOut
 
 @router.post("/auth/login")
-def login(user: User):
-    if user.username not in fake_users_db:
-        raise HTTPException(status_code=404, detail="User not found")
-    if not verify_password(user.password, fake_users_db[user.username]):
-        raise HTTPException(status_code=403, detail="Invalid credentials")
-    return sign_jwt(user.username)
+def login(user: UserLogin, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if not db_user or not verify_password(user.password, db_user.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = sign_jwt(db_user.id)
+
+    return {"access_token": token}

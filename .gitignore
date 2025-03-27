@@ -45,3 +45,4 @@ Thumbs.db
 # GitHub workflows cache
 .github/workflows/*.log
 *.iml
+*.db
